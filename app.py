@@ -12,6 +12,7 @@ from umap import UMAP
 import nltk
 import re
 import pandas as pd
+import plotly.io as pio
 
 app = FastAPI()
 
@@ -30,8 +31,7 @@ class SearchInput(BaseModel):
 
 # Define the preprocessing function
 def preprocess_document(doc):
-    stop_words = set(nltk.corpus.stopwords.words('english'))
-    # Remove special characters and numbers (except periods for sentence splitting)
+    # Retain periods for sentence splitting
     doc = re.sub(r'[^a-zA-Z0-9.\s]', '', doc)
     # Convert to lowercase
     doc = doc.lower()
@@ -57,14 +57,17 @@ async def search_topic(search_input: SearchInput):
 
     # Preprocess the texts
     docs = []
+    stop_words = set(nltk.corpus.stopwords.words('english'))
     for text in texts:
         # Preprocess the entire text
         preprocessed_text = preprocess_document(text)
         # Split text into sentences using NLTK's sentence tokenizer
         sentences = nltk.sent_tokenize(preprocessed_text)
         # Remove stopwords from each sentence
-        stop_words = set(nltk.corpus.stopwords.words('english'))
-        processed_sentences = [' '.join([word for word in sentence.split() if word not in stop_words]) for sentence in sentences]
+        processed_sentences = [
+            ' '.join([word for word in sentence.split() if word not in stop_words])
+            for sentence in sentences
+        ]
         docs.extend(processed_sentences)
 
     # Check if docs list is empty
@@ -82,19 +85,26 @@ async def search_topic(search_input: SearchInput):
         embedding_model=embedding_model,
         umap_model=umap_model,
         min_topic_size=2,
-        verbose=True
+        verbose=False
     )
 
     # Fit the model
     try:
-        topics, probabilities = topic_model.fit_transform(docs)
+        topic_model.fit_transform(docs)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during topic modeling: {str(e)}")
 
     # Retrieve topic information
     topic_info = topic_model.get_topic_info()
 
-    # Check if search term exists in any topic
+    # Exclude outlier topic (-1)
+    topic_info = topic_info[topic_info.Topic != -1]
+
+    # Get the top topics (at least three)
+    top_n = 3
+    top_topics = topic_info.head(top_n).to_dict(orient='records')
+
+    # Find topics containing the search term
     found_topics = []
     for _, row in topic_info.iterrows():
         topic_name = row['Name']
@@ -105,19 +115,27 @@ async def search_topic(search_input: SearchInput):
                 "Count": row['Count']
             })
 
-    if not found_topics:
-        return {"message": "No topics found with the search term."}
+    # Generate the intertopic distance map and hierarchical clustering
+    intertopic_fig = topic_model.visualize_topics()
+    hierarchy_fig = topic_model.visualize_hierarchy()
 
-    # Save the visualization of topics
-    graph_image = topic_model.visualize_barchart(top_n_topics=len(found_topics))
-    graph_image.write_html("topic_graph.html")
+    # Save figures as PNG images and encode in base64
+    try:
+        intertopic_fig_bytes = intertopic_fig.to_image(format="png")
+        hierarchy_fig_bytes = hierarchy_fig.to_image(format="png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating visualizations: {str(e)}")
 
-    return {"topics_found": found_topics}
+    intertopic_base64 = base64.b64encode(intertopic_fig_bytes).decode('utf-8')
+    hierarchy_base64 = base64.b64encode(hierarchy_fig_bytes).decode('utf-8')
 
-@app.get("/download_graph/")
-async def download_graph():
-    file_path = 'topic_graph.html'
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type='text/html', filename='topic_graph.html')
-    else:
-        raise HTTPException(status_code=404, detail="Graph not found.")
+    # Prepare the response
+    response = {
+        "search_term": search_term,
+        "top_topics": top_topics,
+        "found_topics": found_topics,
+        "intertopic_distance_map": intertopic_base64,
+        "hierarchical_clustering": hierarchy_base64
+    }
+
+    return response
