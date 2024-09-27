@@ -116,25 +116,35 @@ async def search_topic(search_input: SearchInput):
             })
 
     # Generate the intertopic distance map and hierarchical clustering
+    # Generate the intertopic distance map as HTML
     intertopic_fig = topic_model.visualize_topics()
+    intertopic_html = intertopic_fig.to_html(full_html=False)
+    # Encode the HTML in base64
+    intertopic_html_base64 = base64.b64encode(intertopic_html.encode('utf-8')).decode('utf-8')
+   # Generate the hierarchical clustering as a PNG image (encoded in base64)
     hierarchy_fig = topic_model.visualize_hierarchy()
-
-    # Save figures as PNG images and encode in base64
     try:
-        intertopic_fig_bytes = intertopic_fig.to_image(format="png")
         hierarchy_fig_bytes = hierarchy_fig.to_image(format="png")
+        hierarchy_base64 = base64.b64encode(hierarchy_fig_bytes).decode('utf-8')
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating visualizations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating hierarchical clustering visualization: {str(e)}")
+    
+    ## Save figures as PNG images and encode in base64
+    #try:
+    #    intertopic_fig_bytes = intertopic_fig.to_image(format="png")
+    #    hierarchy_fig_bytes = hierarchy_fig.to_image(format="png")
+    #except Exception as e:
+    #    raise HTTPException(status_code=500, detail=f"Error generating visualizations: {str(e)}")
 
-    intertopic_base64 = base64.b64encode(intertopic_fig_bytes).decode('utf-8')
-    hierarchy_base64 = base64.b64encode(hierarchy_fig_bytes).decode('utf-8')
+    #intertopic_base64 = base64.b64encode(intertopic_fig_bytes).decode('utf-8')
+    #hierarchy_base64 = base64.b64encode(hierarchy_fig_bytes).decode('utf-8')
 
     # Prepare the response
     response = {
         "search_term": search_term,
-        "top_topics": top_topics,
         "found_topics": found_topics,
-        "intertopic_distance_map": intertopic_base64,
+        "top_topics": top_topics,
+        "intertopic_distance_map": intertopic_html_base64,
         "hierarchical_clustering": hierarchy_base64
     }
 
